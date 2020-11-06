@@ -85,9 +85,9 @@ class RSAOracleAttacker:
         self.s = [1]
         self.n = self.public_key.public_numbers().n
         self.c0 = c
-        
-        self.B = 0
-        s.M = []
+        self.B =  2**((self.public_key.key_size-16))
+        initialM = Interval(2*self.B, 3*self.B-1)
+        self.M = [[initialM]]
         
     def _find_s(self, start_s, s_max=None):
         self.stats[-1].search_count += 1
@@ -135,14 +135,17 @@ class RSAOracleAttacker:
         # at n/3B. Because these are big numbers, you should use
         # gmpy2.c_div to divide n and 3B.
         # return the si found.
-        si = None
+        start = gmpy2.c_div(self.n, 3*self.B)
+        si = self._find_s(start, s_max=None)
+        
         return si
 
 
     def _step2b_searching_with_more_than_one_interval(self):
         # this function searches for a found s where s starts
         # at the most recent s plus one
-        si = None
+        start = self.s[-1] + 1
+        si = self._find_s(start)
         return si
 
 
@@ -159,7 +162,18 @@ class RSAOracleAttacker:
         #   and (3B+(ri x n))/a
         # 
         # If no si is found, increase ri by one and try again.
+        mostRecentInterval = self.M[-1][0]
+        a,b = mostRecentInterval
+        ri = (2 * (b * self.s[-1] - 2*self.B))
+        ri = gmpy2.c_div(ri, self.n)
         si = None
+        while si is None:
+            start_s = 2 * self.B + (ri * self.n)
+            start_s = gmpy2.c_div(start_s, b)
+            s_max = 3 * self.B + (ri * self.n)
+            s_max = gmpy2.c_div(s_max, a)
+            si = self._find_s(start_s, s_max)
+            ri += 1
         return si
 
     def _step3_narrowing_set_of_solutions(self, si):
@@ -187,8 +201,27 @@ class RSAOracleAttacker:
         # For explanations on why to use c_div vs f_div, look up these
         # functions in gmpy2 and then see if you can figure out why one is
         # used over the other
-        return False
-
+        mostRecentM = self.M[-1]
+        intervals = []
+        for a,b in mostRecentM:
+            r_min = ((a * si) - 3 * self.B + 1) 
+            r_min = gmpy2.c_div(r_min, self.n)
+            r_max = ((b * si) - 2 * self.B)
+            r_max = gmpy2.f_div(r_max, self.n)
+            for r in range(r_min, r_max + 1):
+                new_a = (2 * self.B + (r * self.n)) 
+                new_a = gmpy2.c_div(new_a, si)
+                new_b = ((3 * self.B-1) + (r * self.n))
+                new_b = gmpy2.f_div(new_b, si)
+                new_interval = Interval( max(a, new_a), min(b, new_b))
+                intervals.append(new_interval)
+        self.M.append(intervals)
+        self.s.append(si)
+        if len(intervals) == 1 and intervals[0].a == intervals[0].b:
+            return True
+        else:
+            return False
+        
     def _step4_computing_the_solution(self):
         # I just included this step to follow the paper. But we
         # already have the solution.
